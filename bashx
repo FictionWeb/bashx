@@ -1,0 +1,141 @@
+#!/bin/bash
+function @parse {
+  for arg in $@; do 
+    IFS='=' read key value <<< "${arg##;}"; 
+    [ -z "$key" ] && continue
+    printf -v $key "%s" "$value"
+  done
+}
+
+function import() {
+  # Syntax: import <filename>  || import <filename> as <ElementAlias>
+  # import <function> from <filename> || import <function> from <filename> as <ElementAlias>
+  local name filename
+  [ -z "$name" ] && name="$1"
+  shift
+  if [[ "$1" == "as" ]]; then
+    if [ ! -f "$name" ]; then
+      echo "$name not found to import."
+      exit 1
+    fi
+    shift
+    if [ -z "$1" ]; then
+      fn_name=""${name%.*}""
+    else
+      fn_name="$1"
+    fi
+    eval "${fn_name}() { source \"$name\"; }"
+  elif [[ "$1" == "from" ]]; then
+    shift
+    filename="$1"
+    if [ ! -f "$filename" ]; then
+      echo "$name not found to import."
+      exit 1
+    fi
+    local funcout="$(sed -n '/'"$name"'.*\(\)/,/^}/p' "$filename")"
+    shift
+    if [[ "$1" == "as" ]]; then
+      shift
+      if [ -z "$1" ]; then
+        fn_name="${name%.*}"
+      else
+        fn_name="$1"
+      fi
+      eval "${funcout/$name/$fn_name}"
+    else
+      [[ -n "$funcout" ]] && eval "$funcout"
+    fi
+  fi
+}
+
+function @jsFunction {
+  local invoke="$2"
+  [ -z "$(declare -F "$1")" ] && return
+  funccontents=$(declare -f "$1")
+  "${invoke:=false}" && funccontents=$(echo "${funccontents}" | sed -e "s+{+{\n printf '(() => {'+" -e "s+\(.*\)}+\1  printf '})()'; }+" ) || \
+                        funccontents=$(echo "${funccontents}"  | sed -e "s+{+{\n printf '() => {'+" -e "s+\(.*\)}+\1  printf '}' };+" )
+  eval "$funccontents"
+}
+
+
+if [ -f "$1" ]; then 
+  render=$(grep -o 'render.*' "$1")
+  if [[ "$render" ]]; then
+    funcname="${render//render}"
+    isfunc=true
+    input="$(sed -n "/^[[:space:]]*\\(function[[:space:]]\\+\\)\\?${funcname# }[[:space:]]*\\(()\\)\\?[[:space:]]*{/,\$s/^[[:space:]]*//p" "$1")"
+  else  
+    input=$(cat "$1")
+  fi 
+else 
+  :
+fi
+#exec >/output.shx
+if [ -n "$input" ]; then 
+input=$(echo "${input//\\n}" | sed 's|\([a-Z]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|')
+level=0 flevel=0 inscript=false
+
+while read -r line; do 
+  [[ "$line" == '' ]] && continue
+  set -- $line
+  if [[ "${line::1}" == '<' ]]; then 
+    [[ "${line: -2}" != '/>' ]] && { [[ "${line::2}" == '</' ]] && ((level--)) || ((level++)); }
+    if echo "$line" | grep -qE '^[[:space:]]*</?([A-Z][a-zA-Z0-9]*)\b'; then
+      line="${line//\/\>}"
+      line="${line//\>}"
+      echo "${line//\<}"
+    else
+      if [[ "$1" == '<script' && "$2" =~ 'bash' ]]; then 
+        inscript=true
+      elif [[ "$inscript" == true && "$1" =~ '</script' ]]; then 
+        inscript=false
+      else 
+        echo "echo \"${line//\"/\\\"}\""
+      fi
+    fi 
+  else 
+    if ((level == 0)); then 
+      [[ "$isfunc" ]] && { if [[ "$(echo "$line" | sed -n '/^[[:space:]]*\(function[[:space:]]\+\)\?[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(()\)\?[[:space:]]*{[[:space:]]*$/p')" ]]; then 
+        ((flevel++)); echo "$line";
+      elif [[ "$line" == '}' ]]; then 
+        ((flevel--)); echo "$line"; ((flevel == 0)) && break
+      fi; }
+      echo "$line"
+    else 
+      [[ "$line" =~ '{@children}' ||  "$inscript" == true ]] && echo "$line" || echo "echo \"${line//\"/\\\"}\""
+    fi 
+  fi
+done <<< "${input}" | bash
+else 
+while read -r line; do 
+  [[ "$line" == '' ]] && continue
+  set -- $line
+  if [[ "${line::1}" == '<' ]]; then 
+    [[ "${line: -2}" != '/>' ]] && { [[ "${line::2}" == '</' ]] && ((level--)) || ((level++)); }
+    if echo "$line" | grep -qE '^[[:space:]]*</?([A-Z][a-zA-Z0-9]*)\b'; then
+      line="${line//\/\>}"
+      line="${line//\>}"
+      echo "${line//\<}"
+    else
+      if [[ "$1" == '<script' && "$2" =~ 'bash' ]]; then 
+        inscript=true
+      elif [[ "$inscript" == true && "$1" =~ '</script' ]]; then 
+        inscript=false
+      else 
+        echo "echo \"${line//\"/\\\"}\""
+      fi
+    fi 
+  else 
+    if ((level == 0)); then 
+      [[ "$isfunc" ]] && { if [[ "$(echo "$line" | sed -n '/^[[:space:]]*\(function[[:space:]]\+\)\?[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(()\)\?[[:space:]]*{[[:space:]]*$/p')" ]]; then 
+        ((flevel++)); echo "$line";
+      elif [[ "$line" == '}' ]]; then 
+        ((flevel--)); echo "$line"; ((flevel == 0)) && break
+      fi; }
+      echo "$line"
+    else 
+      [[ "$line" =~ '{@children}' ||  "$inscript" == true ]] && echo "$line" || echo "echo \"${line//\"/\\\"}\""
+    fi 
+  fi
+done | bash
+fi
