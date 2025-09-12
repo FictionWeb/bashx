@@ -7,6 +7,10 @@ _nc="$(tput sgr 0)"
 function _render() {
 local level=0 flevel=0 inscript=false output='' i=0 tag=''
 local -a parent=() extra=()
+function @error() {
+  [[ ${#FUNCNAME[@]} > 1 ]] && echo -n "(${FUNCNAME[1]}) "
+  echo "${_red}Error:${_nc} ${@}" >&2
+}
 while read -r line; do 
  # echo "line: $line" >&2
   [[ "$nextline" ]] && local buf="$line" && line="$nextline" && nextline="$buf"
@@ -82,7 +86,7 @@ while read -d $'\r' block; do
   elif [[ "${block//$'\n'}" =~ "json" ]]; then 
     local newblock="${block/@return json}"
     newblock="${newblock//\};/\}}"
-    newblock="${newblock//$'\n'}"
+    newblock="${newblock//$'\n'/ }"
     newblock=$(cat <<-eof
 echo "${newblock//\"/\\\"}"
 eof
@@ -93,7 +97,7 @@ eof
   block="${block//$'\n'/#NEWLIN#}"
   block="${block//\[/\\\[}"
   block="${block//\]/\\\]}"
-  out1="${out1//$block/$newblock}"
+  out1="${out1//$block/${newblock% }}"
 done <<< "$out2"
 [[ "$BASHX_VERBOSE" ]] && { 
   printf "%s\n" "[$_green✓$_nc] Compiled $1 ($(($(date +%s%3N)-time))ms)" 
@@ -223,11 +227,14 @@ if (return 0 2>/dev/null); then
   return
 elif [[ -z $BASHX_NESTED ]]; then
   BASHX_NESTED=true 
-  if [ -f "$1" ]; then 
+  if [ -z "$1" ]; then
+    @error "Invalid usage: Use $0 [filename]"
+    exit 1
+  elif [ -f "$1" ]; then 
     bashx "$1"
     exit
   else
-    error "$1 is not found"
+    @error "$1 is not found"
     exit 1
   fi
 fi
