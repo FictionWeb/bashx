@@ -43,40 +43,29 @@ while read -r line; do
           [[ "$dom" ]] && unset dom
         fi
       else
-        echo "$line"
-          if [[ "$line" =~ on:* ]]; then
-            line="${line%%\>}"
-            line="${line##\<}"
-            local finalout
-            read el args <<< "$line"
+          if [[ "$line" =~ on: ]]; then
+            line="${line%%\>}";
+            line="${line##\<}";
+            local arg attr key events;
+            read el args <<< "$line";
             #set -- $args
-            for arg in "$args"; do 
+            while read arg; do 
               IFS='=' read key value <<< "${arg}"; 
+              @unquote value
               if [[ -z "$key" ]]; then 
                 continue
               fi 
               case "$key" in
-                js-on:*)
-                  key="${key//js-on:}"
-                  value="${value##\'}"
-                  value="${value%%\'}"
-                  _events+="on${key,,}=\"$($value)\" "
-                ;;
-                on:*)
-                  key="${key//on:}"
-                  value="${value##\'}"
-                  value="${value%%\'}"
-                  _events+="on${key,,}=\"\$(addServerAction "$value")\" "
-                ;;
-                on*)
-                  _events+="${key,,}=\"$value\" "
-                ;;
-                *) 
-                  finalout+="$key=\"$value\" "
+                js-on:*) key="${key//js-on:}"; events+="on${key,,}=\"$($value)\" " ;;
+                on:*) key="${key//on:}"; _events+="on${key,,}=\"\$(addServerAction "$value")\" " ;;
+                on*)  events+="${key,,}=\"$value\" " ;;
+                *)  attr+="$key=\"$value\" "
               esac
-            done
-            output+="printf '%s' \"<$el $finalout $_events>\""$'\n'
-            unset el args finalout
+            done <<< "$args"
+            output+="printf '%s' \"<$el $attr $events>'\""$'\n'
+            unset el args key events arg
+          elif [[ "$line" =~ '</'|'<body'|'<main'|'<div' ]]; then
+            output+="printf '%s\n' '${line}'"$'\n'
           else
           output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
           fi
