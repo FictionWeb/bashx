@@ -27,24 +27,59 @@ while read -r line; do
       line="${line##\<}"
       output+="$line"$'\n' # only keep the function and it's arguments
     else
-      #echo "$line" >&2
       read tag _ <<< "$line"
       if [[ "$tag" == '<script' ]]; then 
         if [[ "$line" =~ 'bash' ]]; then # if lang="bash", the code will be directly executed
           inscript=true
         elif [[ "$line" =~ 'dom' ]]; then # if lang="dom", the code will be executed but added as js code
           local dom=true;
-          output+="echo '<script>'"$'\n';
+          output+=$'printf "%s" "<script>"\n';
         fi
       elif [[ "$tag" =~ '</script' ]]; then 
         if [[ "$inscript" == true ]]; then 
           inscript=false
         else
-          output+="echo '</script>'"$'\n';
+          output+=$'printf "%s" "</script>"\n';
           [[ "$dom" ]] && unset dom
         fi
-      else  
-          output+="echo \"${line//\"/\\\"}\""$'\n'
+      else
+        echo "$line"
+          if [[ "$line" =~ on:* ]]; then
+            line="${line%%\>}"
+            line="${line##\<}"
+            local finalout
+            read el args <<< "$line"
+            #set -- $args
+            for arg in "$args"; do 
+              IFS='=' read key value <<< "${arg}"; 
+              if [[ -z "$key" ]]; then 
+                continue
+              fi 
+              case "$key" in
+                js-on:*)
+                  key="${key//js-on:}"
+                  value="${value##\'}"
+                  value="${value%%\'}"
+                  _events+="on${key,,}=\"$($value)\" "
+                ;;
+                on:*)
+                  key="${key//on:}"
+                  value="${value##\'}"
+                  value="${value%%\'}"
+                  _events+="on${key,,}=\"\$(addServerAction "$value")\" "
+                ;;
+                on*)
+                  _events+="${key,,}=\"$value\" "
+                ;;
+                *) 
+                  finalout+="$key=\"$value\" "
+              esac
+            done
+            output+="printf '%s' \"<$el $finalout $_events>\""$'\n'
+            unset el args finalout
+          else
+          output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
+          fi
       fi
       unset tag _
     fi 
@@ -54,7 +89,7 @@ while read -r line; do
       output+="$line"$'\n'
     else 
       [[ "$line" =~ '{' && "$line" =~ '}' ]] && line=$(echo "$line" | sed 's|{\([^[:space:]]\+\)}|<a data-bind="\1"></a>|g')
-      output+="echo \"${line//\"/\\\"}\""$'\n'
+      output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
     fi 
   fi
 done
@@ -134,7 +169,7 @@ function @parse {
         key="${key//on:}"
         value="${value##\'}"
         value="${value//\'}"
-        _events+="on${key,,}=\"$(addServerAction "$value")\" "
+        _events+="on${key,,}=\"\$(addServerAction "$value")\" "
         ;;
       on*)
         _events+="${key,,}=\"$value\" "
