@@ -128,7 +128,7 @@ done <<< "$out2"
 [[ "$BASHX_VERBOSE" ]] && { 
   printf "%s\n" "[$_green✓$_nc] Compiled $1 ($(($(date +%s%3N)-time))ms)" 
 }
-unset input out out2 block time block1
+unset input out out2 block time block1 render_output
 if [[ "$2" ]]; then 
   echo "$1:"
   echo "${out1//#NEWLIN#/$'\n'}" 
