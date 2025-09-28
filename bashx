@@ -128,7 +128,7 @@ done <<< "$out2"
 [[ "$BASHX_VERBOSE" ]] && { 
   printf "%s\n" "[$_green✓$_nc] Compiled $1 ($(($(date +%s%3N)-time))ms)" 
 }
-unset input out out2 block time
+unset input out out2 block time block1
 if [[ "$2" ]]; then 
   echo "$1:"
   echo "${out1//#NEWLIN#/$'\n'}" 
@@ -137,7 +137,7 @@ else
   BASHX_FILENAME="$(readlink -f "$1")"
   eval "${out1//#NEWLIN#/$'\n'}"
 fi
-unset out out1 out2 block
+unset out out1 out2 block block1
 #set -x
 }
 function @parse {
@@ -167,6 +167,7 @@ function @parse {
         printf -v "$key" "%s" "$value"
       esac
   done
+  unset arg key value
 }
 
 function @exclude {
