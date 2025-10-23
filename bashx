@@ -1,9 +1,10 @@
 #!/bin/bash
-_green="$(tput setaf 2)"
+[[ ! -v _red ]] && { _green="$(tput setaf 2)"
 _red="$(tput setaf 1)"
 _white="$(tput setaf 255)"
 _bold="$(tput bold)"
 _nc="$(tput sgr 0)"
+}
 function _render() {
 local dom=false level=0 flevel=0 inscript=false output='' i=0 tag=''
 local -a parent=() extra=()
@@ -11,37 +12,55 @@ function @error() {
   [[ ${#FUNCNAME[@]} > 1 ]] && echo -n "(${FUNCNAME[1]}) " >&2
   echo "${_red}Error:${_nc} ${@}" >&2
 }
-while read -r line; do 
- # echo "line: $line" >&2
-  [[ "$nextline" ]] && local buf="$line" && line="$nextline" && nextline="$buf"
-  if [[ "$line" == '' || "${line::1}" == '#' || "${line::3}" == '<--' ]]; then # skip empty lines and comments
-    continue
-  elif [[ "$line" =~ "html {" ]]; then 
-    continue
-  elif [[ "${line::1}" == '<' ]]; then # check if it's html tag
-    #echo "$line" >&2
-    if echo "${line## }" | grep -qE '^[[:space:]]*</?([A-Z][a-zA-Z0-9]*)\b'; then # regex if it's a custom element or native html
-      [[ "$line" =~ /\>.* ]] && nextline=$(sed 's|^.*/>\(.*\)|\1|' <<< "$line") && line="${line//$nextline}" 
-      line="${line%%\/\>}"
-      line="${line%%\>}"
-      line="${line##\<}"
-      output+="$line"$'\n' # only keep the function and it's arguments
-    else
-      read tag _ <<< "$line"
-      if [[ "$tag" == '<script' ]]; then 
-        if [[ "$line" =~ 'bash' ]]; then # if lang="bash", the code will be directly executed
-          inscript=bash
-        elif [[ "$line" =~ 'dom' ]]; then # if lang="dom", the code will be executed but added as js code
-          inscript=dom
-          output+=$'printf "%s" "<script>"\n';
-        else 
-          inscript=js
-          output+="printf '%s\n' '$line' "$'\n';
-        fi
-      elif [[ "$tag" =~ '</script' ]]; then 
-          [[ "$inscript" == dom || "$inscript" == js ]] && output+=$'printf "%s" "</script>"\n';
-          inscript=false
+
+while read -r line; do
+  line="${line//&&/%AND%}"
+  line="${line%% }"
+  [[ "$line" == '' || "${line::1}" == '#' ]] && continue
+  if [[ "${line::1}" == "<" ]]; then
+    while read -r line; do
+      [[ "$nextline" ]] && local buf="$line" && line="$nextline" && nextline="$buf"
+      [[ "$line" == '' || "${line::1}" == '#' ]] && continue
+      if echo "${line## }" | grep -qE '^[[:space:]]*</?([A-Z][a-zA-Z0-9]*)\b'; then # regex if it's a custom element or native html
+        [[ "$line" =~ /\>.* ]] && nextline=$(sed 's|^.*/>\(.*\)|\1|' <<< "$line") && line="${line//$nextline}" 
+        line="${line%%\/\>}"
+        line="${line%%\>}"
+        line="${line##\<}"
+        output+="$line"$'\n' # only keep the function and it's arguments
       else
+        read tag _ <<< "$line"
+        if [[ "$tag" =~ '<script' ]]; then 
+          if [[ "$line" =~ 'text/x-bash-client' ]]; then
+            [[ "$line" =~ defer || ! -v bash_wasm_path ]] && inscript=bash-client-defer || inscript=bash-client
+            output+=$'cat <<- "EOF"\n'
+            [[ ! -v bash_wasm_path ]] && output+="<script>addServerAction(\`" || output+="<script>execute(\`"
+          elif [[ "$line" =~ '"text/x-bash' ]]; then # if type="x-bash", the code will be directly executed
+            inscript=bash
+          elif [[ "$line" =~ '"text/x-dom' ]]; then # if type="x-dom", the code will be executed but added as js code
+            inscript=dom
+            output+=$'printf "%s" "<script>"\n';
+          else 
+            inscript=js
+            output+=$'cat <<- "EOF"\n'
+            output+="$line"$'\n';
+          fi
+        elif [[ "$tag" =~ '</script' ]]; then 
+          if [[ "$inscript" == js ]]; then
+            output+=$'</script>\nEOF\n'
+          elif [[ "$inscript" == dom ]]; then
+            output+=$'printf "%s" "</script>"\n';
+          elif [[ $inscript =~ bash-client ]]; then
+            if [[ "$inscript" =~ defer ]]; then
+              output+=$'`)</script>\nEOF\n'
+            else
+              local uid=$(cat /proc/sys/kernel/random/uuid)
+              output+="\`,'$uid')</script><div id='$uid'></div>"
+              unset uid
+              output+=$'\nEOF\n'
+            fi
+          fi
+          inscript=false
+        else
           if [[ "$line" =~ on: ]]; then
             line="${line%%\>}";
             line="${line##\<}";
@@ -56,7 +75,8 @@ while read -r line; do
               fi 
               case "$key" in
                 js-on:*) key="${key//js-on:}"; events+="on${key,,}=\"$($value)\" " ;;
-                on:*) key="${key//on:}"; _events+="on${key,,}=\"\$(addServerAction "$value")\" " ;;
+                server-on:*) key="${key//on:}"; _events+="on${key,,}=\"\$(addServerAction "$value")\" " ;;
+                on:*) key="${key//on:}"; _events+="on${key,,}=\"execute(\`$value\`)\" " ;;
                 on*)  events+="${key,,}=\"$value\" " ;;
                 *)  attr+="$key=\"$value\" "
               esac
@@ -68,20 +88,20 @@ while read -r line; do
           else
           output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
           fi
-      fi
-      unset tag _
-    fi 
-  else
-    # skip reserved words or code to execute, replace {placeholder} if <a data-bind="placeholder"></a> for bindState()
-    if [[ "$line" =~ '{@children}'|'{cache}'|'{/cache}'|'@return' || "$inscript" =~ bash|dom ]]; then 
-      output+="$line"$'\n'
-    elif [[ "$inscript" == js ]]; then
-      output+="printf '%s\n' \"${line//\"/\\\"}\""$'\n'
-    else 
-      [[ "$line" =~ '{' && "$line" =~ '}' ]] && line=$(echo "$line" | sed 's|{\([^[:space:]]\+\)}|<a data-bind="\1"></a>|g')
-      output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
-    fi 
-  fi
+        fi
+        unset tag _
+      fi 
+    done < <(echo "$line" | sed 's|\([a-zA-Z0-9|"|\@|\/]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g')
+  elif [[ "$line" =~ '{@children}'|'{cache}'|'{/cache}'|'@return' || "$inscript" =~ bash|dom|js ]]; then 
+    output+="$line"$'\n'
+  elif [[ "$inscript" == bash-client ]]; then
+    output+="$line"$'\n'
+  elif [[ "${line::2}" =~ '$(' ]]; then
+     output+="echo \"$line\""$'\n'
+  else 
+    [[ "$line" =~ '{' && "$line" =~ '}' ]] && line=$(echo "$line" | sed 's|{\([^[:space:]]\+\)}|<a data-bind="\1"></a>|g')
+    output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
+  fi 
 done
 #output="$(echo "$output" | sed 's|\(.*\)}|\1|')"
 # <<< "${input}"
@@ -105,7 +125,8 @@ local out2=$(echo "$input" | awk 'function count(s, c) { n=0; for (i=1; i<=lengt
 #return
 while read -d $'\r' block; do
   #echo "${block}"
-  block1=$(echo "${block//$'\n'}" | sed 's|\([a-zA-Z0-9|"|\@|\/]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g') 
+  block1="$block" # | sed  's|\([a-zA-Z0-9|"|\@|\/]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g')
+ # block1="$block"
   if [[ "${block//$'\n'}" =~ 'html' ]]; then
     block1="${block1%%\}}"
     _render "" <<< "${block1/@return html \{}"
@@ -130,12 +151,15 @@ done <<< "$out2"
   printf "%s\n" "[$_green✓$_nc] Compiled $1 ($(($(date +%s%3N)-time))ms)" 
 }
 unset input out out2 block time block1 render_output
+#echo "${out1//#NEWLIN#/$'\n'}" 
+#return
 if [[ "$2" ]]; then 
   echo "$1:"
   echo "${out1//#NEWLIN#/$'\n'}" 
   printf "\n"
 else 
   BASHX_FILENAME="$(readlink -f "$1")"
+  out1="${out1//\%AND\%/\&\&}"
   eval "${out1//#NEWLIN#/$'\n'}"
 fi
 unset out out1 out2 block block1
@@ -159,17 +183,19 @@ function @parse {
         key="${key//on:}"
         value="${value##\'}"
         value="${value//\'}"
-        _events+="on${key,,}=\"\$(addServerAction "$value")\" "
+        _events+="on${key,,}='execute('$value')"
         ;;
       on*)
         _events+="${key,,}=\"$value\" "
       ;;
       *) 
-        printf -v "$key" "%s" "$value"
+        [[ "$BASH_BROWSER" ]] && export $key="$value" || printf -v "$key" "%s" "$value"
       esac
   done
   unset arg key value
 }
+
+#function @parse { _events=''; for arg in "$@"; do IFS='=' read key value <<< "${arg}"; [[ -z "$key" || -z "$@" ]] && continue; case "$key" in js-on:*) key="${key//js-on:}"; _events+="on${key,,}=\"`$value`\" " ;; on:*) key="${key//on:}"; _events+="on${key,,}='execute('$value')" ;; on*) _events+="${key,,}=\"$value\" " ;; *) printf -v "$key" "%s" "$value" ;;  esac; done; unset arg key value; }
 
 function @exclude {
   local list="${1}" result=()
