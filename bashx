@@ -11,7 +11,7 @@ function _conditionalRender() {
   while read line; do
     if [[ "$line" == '$(' ]]; then 
       continue
-    elif [[ "${line::2}" =~ \<[a-Z]|\</|\"\<|\'\<  ]]; then
+    elif [[ "${line::2}" =~ \<[A-z]|\</|\"\<|\'\<  ]]; then
       if [[ ${line: -5} == %AND% ]]; then 
         line="${line%%\%AND\%}"
         line="${line%% }"
@@ -29,7 +29,7 @@ function _conditionalRender() {
           line="${line%%\/\>}"
           line="${line%%\>}"
           line="${line##\<}"
-          output+="\$($line)"$'\n' 
+          output+="\\\`$line\\\`"$'\n' 
         else 
           output+="${line//\"/\\\"}"
         fi
@@ -65,6 +65,7 @@ while read -r line; do
   fi
   [[ "$line" == '' || "${line::1}" == '#' ]] && continue
   
+  [[ ! -v __render_type && "$line" =~ @render= ]] && @render_type "${line##@render=}" && continue
   if [[ "${line::1}" == "<" ]]; then
     while read -r line; do
       [[ "$nextline" ]] && local buf="$line" && line="$nextline" && nextline="$buf"
@@ -76,35 +77,42 @@ while read -r line; do
         line="${line##\<}"
         output+="$line"$'\n' # only keep the function and it's arguments
       else
-        read tag _ <<< "$line"
-        if [[ "$tag" =~ '<script' ]]; then 
-          if [[ "$line" =~ 'text/x-bash-client' ]]; then
-            [[ "$line" =~ defer || ! -v bash_wasm_path ]] && inscript=bash-client-defer || inscript=bash-client
-            output+=$'cat <<- "EOF"\n'
+        read tag attr <<< "$line"
+        if [[ "$tag" =~ '<script' ]]; then
+          if [[ "$attr" =~ text/x-bash ]]; then
+            [[ "$type" =~ silent || ! -v bash_wasm_path ]] && inscript=bash-client-silent || inscript=bash-client
+            output+=$'cat <<- "_EOF_"\n'
             [[ ! -v bash_wasm_path ]] && output+="<script>addServerAction(\`" || output+="<script>execute(\`"
-          elif [[ "$line" =~ '"text/x-bash' ]]; then # if type="x-bash", the code will be directly executed
-            inscript=bash
-          else 
+          elif [[ "$attr" =~ text/x-bash ]]; then
+            if [[ $__render_type == client ]]; then
+              inscript=bash-client
+              output+=$'cat <<- "EOF"\n<script>execute(`'
+            else  
+              inscript=bash 
+            fi
+          else
             inscript=js
-            output+=$'cat <<- "EOF"\n'
-            output+="$line"$'\n';
+            output+=$'cat <<- "_EOF_"\n'
+            output+="$line"$'\n'
           fi
         elif [[ "$tag" =~ '</script' ]]; then 
-          if [[ "$inscript" == js ]]; then
-            output+=$'</script>\nEOF\n'
-          elif [[ $inscript =~ bash-client ]]; then
-            if [[ "$inscript" =~ defer ]]; then
-              output+=$'`)</script>\nEOF\n'
-            else
+          case "$inscript" in 
+            js)
+              output+=$'</script>\n_EOF_\n'
+            ;;
+            bash-client-silent)
+              output+=$'`)</script>\n_EOF_\n'
+            ;;
+            bash-client)
               local uid=$(cat /proc/sys/kernel/random/uuid)
               output+="\`,'$uid')</script><div id='$uid'></div>"
               unset uid
-              output+=$'\nEOF\n'
-            fi
-          fi
+              output+=$'\n_EOF_\n'
+          esac
           inscript=false
         else
-          if [[ "$line" =~ on: ]]; then
+          case "$line" in
+          on:*)
             line="${line%%\>}";
             line="${line##\<}";
             local arg attr key events;
@@ -126,11 +134,19 @@ while read -r line; do
             done <<< "$args"
             output+="printf '%s' \"<$el $attr $events>'\""$'\n'
             unset el args key events arg
-          elif [[ "$line" =~ '</'|'<body'|'<main'|'<div' ]]; then
+          ;;
+          '</head>')
+            [[ -v ismeta ]] && unset ismeta
+          ;;
+          '</'*|'<body'*|'<main'*|'<div'*)
             output+="printf '%s\n' '${line}'"$'\n'
-          else
-          output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
-          fi
+          ;;
+          '<head')
+            local ismeta=true
+          ;;
+          *)
+           [[ "$ismeta" ]] && output+="addMeta \"${line//\"/\\\"}\""$'\n' || output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
+          esac
         fi
         unset tag _
       fi 
@@ -150,16 +166,30 @@ while read -r line; do
     else 
       line="${line//\$(/\$($'\n'  }"
       line="${line%%)}"$'\n)'
+      echo "render type: $__render_type"
       if [[ "$__render_type" == client ]]; then 
-        output+=$'cat << EOF\n<script type="x-bash-client">'
+        output+=$'cat <<- "_EOF_"\n<script>execute(`'
         _conditionalRender <<<"${line//%AND%/%AND%$'\n'}"
-        output+=$'</script>\nEOF'
+        local uid=$(cat /proc/sys/kernel/random/uuid)
+        output+="\`,'$uid')</script><div id='$uid'></div>"
+        output+=$'\n_EOF_\n'
+        unset uid
       else 
         _conditionalRender <<<"${line//%AND%/%AND%$'\n'}"
       fi
     fi
   elif [[ "${line}" == ')' && "$chunk" ]]; then
-    _conditionalRender <<<"${chunk//%AND%/%AND%$'\n'}"
+    echo "render type: $__render_type"
+    if [[ "$__render_type" == client ]]; then 
+      output+=$'cat <<- "_EOF_"\n<script>execute(`'
+        _conditionalRender <<<"${chunk//%AND%/%AND%$'\n'}"
+        local uid=$(cat /proc/sys/kernel/random/uuid)
+        output+="\`,'$uid')</script><div id='$uid'></div>"
+        output+=$'\n_EOF_\n'
+        unset uid
+    else 
+      _conditionalRender <<<"${chunk//%AND%/%AND%$'\n'}"
+    fi
   else 
     [[ "$line" =~ '{' && "$line" =~ '}' ]] && line=$(echo "$line" | sed 's|{\([^[:space:]]\+\)}|<a data-bind="\1"></a>|g')
     output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
@@ -167,7 +197,6 @@ while read -r line; do
 done
 #output="$(echo "$output" | sed 's|\(.*\)}|\1|')"
 # <<< "${input}"
-
 render_output="$output"
 unset input output level flevel i inscript parent line nextline
 } 
