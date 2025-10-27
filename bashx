@@ -166,7 +166,6 @@ while read -r line; do
     else 
       line="${line//\$(/\$($'\n'  }"
       line="${line%%)}"$'\n)'
-      echo "render type: $__render_type"
       if [[ "$__render_type" == client ]]; then 
         output+=$'cat <<- "_EOF_"\n<script>execute(`'
         _conditionalRender <<<"${line//%AND%/%AND%$'\n'}"
@@ -179,7 +178,6 @@ while read -r line; do
       fi
     fi
   elif [[ "${line}" == ')' && "$chunk" ]]; then
-    echo "render type: $__render_type"
     if [[ "$__render_type" == client ]]; then 
       output+=$'cat <<- "_EOF_"\n<script>execute(`'
         _conditionalRender <<<"${chunk//%AND%/%AND%$'\n'}"
@@ -328,7 +326,7 @@ function @render_type() {
   esac
 }
 
-function import() {
+function @import() {
   # Syntax: import <filename>  || import <filename> as <ElementAlias>
   # import <function> from <filename> || import <function> from <filename> as <ElementAlias>
   local name filename
@@ -377,7 +375,6 @@ function import() {
 declare -F exportFunction >/dev/null && exportFunction @require @unquote @parse @exclude
 
 if (return 0 2>/dev/null); then
-    echo "${BASH_SOURCE[@]} $0"
   [[ -z "$BASHX_NESTED" ]] && BASHX_NESTED=true && bashx "${BASH_SOURCE[-1]}" && exit
 elif [[ -z $BASHX_NESTED ]]; then
   BASHX_NESTED=true 
