@@ -79,7 +79,7 @@ while read -r line; do
       else
         read tag attr <<< "$line"
         if [[ "$tag" =~ '<script' ]]; then
-          if [[ "$attr" =~ text/x-bash ]]; then
+          if [[ "$attr" =~ text/x-bash-client ]]; then
             [[ "$type" =~ silent || ! -v bash_wasm_path ]] && inscript=bash-client-silent || inscript=bash-client
             output+=$'cat <<- "_EOF_"\n'
             [[ ! -v bash_wasm_path ]] && output+="<script>addServerAction(\`" || output+="<script>execute(\`"
