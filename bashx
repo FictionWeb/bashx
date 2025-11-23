@@ -1,4 +1,6 @@
 #!/bin/bash
+# bashx compiler
+# (C) Tirito6626 2025 
 [[ ! -v _red ]] && { 
 _green="$(tput setaf 2)"
 _red="$(tput setaf 1)"
@@ -8,11 +10,12 @@ _nc="$(tput sgr 0)"
 }
 
 function _conditionalRender() {
+#  set -x 
   while read line; do
-    if [[ "$line" == '$(' ]]; then 
+    if [[ "$line" == '$(' ]]; then # match start of subshell capture
       continue
-    elif [[ "${line::2}" =~ \<[A-z]|\</|\"\<|\'\<  ]]; then
-      if [[ ${line: -5} == "%AND%" ]]; then 
+    elif [[ "${line::2}" =~ \<[a-Z]|\</|\"\<|\'\<  ]]; then # match html element
+      if [[ ${line: -5} == "%AND%" ]]; then # skip && for now
         line="${line%%\%AND\%}"
         line="${line%% }"
         @unquote line
@@ -22,24 +25,26 @@ function _conditionalRender() {
       fi
       output+=" printf '%s' \""
       while read line; do
-      [[ "$nextline" ]] && local buf="$line" && line="$nextline" && nextline="$buf"
+      [[ "$nextline" ]] && local buf="$line" && line="$nextline" && nextline="$buf" # move line to buffer
         
-        if echo "${line## }" | grep -qE '^[[:space:]]*</?([A-Z][a-zA-Z0-9]*)\b'; then 
+        if echo "${line## }" | grep -qE '^[[:space:]]*</?([A-Z][a-zA-Z0-9]*)\b'; then # match custom element
           [[ "$line" =~ /\>.* ]] && nextline=$(sed 's|^.*/>\(.*\)|\1|' <<< "$line") && line="${line//$nextline}" 
           line="${line%%\/\>}"
           line="${line%%\>}"
           line="${line##\<}"
-          output+="\\\`$line\\\`"$'\n' 
+          output+="\`$line\`"$'\n' 
         else 
           output+="${line//\"/\\\"}"
         fi
-      done < <(echo "$line" | sed 's|\([a-zA-Z0-9|"|\@|\/]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g')
-      [[ $appendand == true ]] && output+=$'" %AND%' && unset appendadd || output+=$'"\n'
+      done < <(echo "$line" | sed 's|\([a-zA-Z0-9|"|\@|\/]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g') # html parser basically
+      [[ $appendand == true ]] && output+=$'" %AND%' && unset appendadd || output+=$'"\n' # add && back
     else 
       output+=" $line"
     fi
   done
+  output="${output//$'\n' ||/||}"
   output="${output%%)}"$'\n'
+# set +x
 }
 
 function @error() {
@@ -53,7 +58,7 @@ local -a parent=() extra=()
 
 while read -r line; do
   line="${line%% }"
-  line="${line//&&/%AND%}"
+  line="${line//&&/%AND%}" # parser panics if there is "&&" for some reason
   if [[ "$readchunk" ]]; then 
     if [[ "${line: -1}" != ')' ]]; then
       chunk+="${line}"$'\n' && continue
@@ -78,12 +83,14 @@ while read -r line; do
         output+="$line"$'\n' # only keep the function and it's arguments
       else
         read tag attr <<< "$line"
+
+        # any lines related to execute() and x-bash-client are made for bash-wasm module which isn't working for now
         if [[ "$tag" =~ '<script' ]]; then
-          if [[ "$attr" =~ text/x-bash-client ]]; then
+          if [[ "$attr" =~ text/x-bash-client ]]; then 
             [[ "$type" =~ silent || ! -v bash_wasm_path ]] && inscript=bash-client-silent || inscript=bash-client
             output+=$'cat <<- "_EOF_"\n'
             [[ ! -v bash_wasm_path ]] && output+="<script>addServerAction(\`" || output+="<script>execute(\`"
-          elif [[ "$attr" =~ text/x-bash ]]; then
+          elif [[ "$attr" =~ text/x-bash ]]; then # match "<script type=text/x-bash>" blocks
             if [[ $__render_type == client ]]; then
               inscript=bash-client
               output+=$'cat <<- "EOF"\n<script>execute(`'
@@ -111,6 +118,7 @@ while read -r line; do
           esac
           inscript=false
         else
+        # process rest lines
           case "$line" in
           on:*)
             line="${line%%\>}";
@@ -145,17 +153,19 @@ while read -r line; do
             local ismeta=true
           ;;
           *)
-           [[ "$ismeta" ]] && output+="addMeta \"${line//\"/\\\"}\""$'\n' || output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
+           [[ "$ismeta" ]] && output+="fiction.addMeta \"${line//\"/\\\"}\""$'\n' || output+="printf '%s' \"${line//\"/\\\"}\""$'\n' # automatically add stuff to <head>
           esac
         fi
         unset tag _
       fi 
     done < <(echo "$line" | sed 's|\([a-zA-Z0-9|"|\@|\/]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g')
+
+  # add line without any wrapping in case it's bash/inside js block
   elif [[ "$line" =~ '{@children}'|'{cache}'|'{/cache}'|'@return' || "$inscript" =~ bash|js ]]; then 
     output+="$line"$'\n'
   elif [[ "$inscript" =~ bash-client ]]; then
     output+="$line"$'\n'
-  elif [[ "${line::2}" =~ '$(' ]]; then
+  elif [[ "${line::2}" =~ '$(' ]]; then # capture subshell execution
      #output+="echo \"$line\""$'\n'
    #line="${line//%AND%/\&\&$'\n'}"
     if [[ ! "$line" =~ ')' ]]; then
@@ -166,30 +176,35 @@ while read -r line; do
     else 
       line="${line//\$(/\$($'\n'  }"
       line="${line%%)}"$'\n)'
+      # pass subshell chunk to conditional renderer
       if [[ "$__render_type" == client ]]; then 
         output+=$'cat <<- "_EOF_"\n<script>execute(`'
-        _conditionalRender <<<"${line//%AND%/%AND%$'\n'}"
+        line="${line//%AND%/%AND%$'\n'}"
+        _conditionalRender <<<"${line//||/$'\n'||$'\n'}"
         local uid=$(cat /proc/sys/kernel/random/uuid)
-        output+="\`,'$uid')</script><div id='$uid'></div>"
+        output+="\`,'$uid')</script><div id='$uid'></div>" # extra div to redirect output from bash-client block
         output+=$'\n_EOF_\n'
         unset uid
       else 
-        _conditionalRender <<<"${line//%AND%/%AND%$'\n'}"
+        line="${line//%AND%/%AND%$'\n'}"
+        _conditionalRender <<<"${line//||/$'\n'||$'\n'}"
       fi
     fi
-  elif [[ "${line}" == ')' && "$chunk" ]]; then
+  elif [[ "${line}" == ')' && "$chunk" ]]; then # append chunk in case subshell is multi-line
     if [[ "$__render_type" == client ]]; then 
       output+=$'cat <<- "_EOF_"\n<script>execute(`'
-        _conditionalRender <<<"${chunk//%AND%/%AND%$'\n'}"
-        local uid=$(cat /proc/sys/kernel/random/uuid)
-        output+="\`,'$uid')</script><div id='$uid'></div>"
-        output+=$'\n_EOF_\n'
-        unset uid
+      line="${line//%AND%/%AND%$'\n'}"
+      _conditionalRender <<<"${line//||/$'\n'||$'\n'}"
+      local uid=$(cat /proc/sys/kernel/random/uuid)
+      output+="\`,'$uid')</script><div id='$uid'></div>"
+      output+=$'\n_EOF_\n'
+      unset uid
     else 
-      _conditionalRender <<<"${chunk//%AND%/%AND%$'\n'}"
+      line="${line//%AND%/%AND%$'\n'}"
+      _conditionalRender <<<"${line//||/$'\n'||$'\n'}"
     fi
   else 
-    [[ "$line" =~ '{' && "$line" =~ '}' ]] && line=$(echo "$line" | sed 's|{\([^[:space:]]\+\)}|<a data-bind="\1"></a>|g')
+    [[ "$line" =~ '{' && "$line" =~ '}' ]] && line=$(echo "$line" | sed 's|{\([^[:space:]]\+\)}|<a data-bind="\1"></a>|g') # "dynamic" variables manageable by setState
     output+="printf '%s' \"${line//\"/\\\"}\""$'\n'
   fi 
 done
@@ -202,14 +217,14 @@ unset input output level flevel i inscript parent line nextline
 bashx() {
 #set -x
 if [ -f "$1" ]; then 
+  # regex for capturing all @return blocks
   input=$(sed -E 's#(.*)\@return[[:space:]](json|html)[[:space:]]*\{[[[:space:]]*]?(.*)[^^]\}(.*)$#\1\n\@return \2 \{\n\3\n}\n\4#g' "$1" | sed 's/^source.*bashx//g') 
 else 
   return 1
 fi
 local time=$(date +%s%3N)
-
-#local input=$(echo "${input//\\n}" | sed 's|\([a-zA-Z|"]\)>|\1>\n|g; s|\(</[^>]*>\)|\n\1|g') # split code into elements
-local out1="${input//$'\n'/#NEWLIN#}" 
+local out1="${input//$'\n'/#NEWLIN#}" # remove newlines
+# split @return blocks with $'\r' for further parsing per block
 local out2=$(echo "$input" | awk 'function count(s, c) { n=0; for (i=1; i<=length(s); i++) if (substr(s, i, 1) == c) n++; return n } /^[[:space:]]*@return[[:space:]](html|json)[[:space:]]*{[[:space:]]*$/ { in_block=1; depth=1; print; next } in_block { o=count($0,"{"); c=count($0,"}"); depth+=o-c; print; if (depth==0) { in_block=0; print "\r" } }')
 #echo "$out2" 
 #return
@@ -222,6 +237,7 @@ while read -d $'\r' block; do
     _render "" <<< "${block1/@return html \{}"
     local newblock="{"$'\n'"${render_output}"$'\n'"}"
   elif [[ "${block//$'\n'}" =~ "json" ]]; then 
+  # remove semicolon, newlines and replace `"` with `\"`
     local newblock="${block/@return json}"
     newblock="${newblock//\};/\}}"
     newblock="${newblock//$'\n'/ }"
@@ -243,7 +259,7 @@ done <<< "$out2"
 unset input out out2 block time block1 render_output
 #echo "${out1//#NEWLIN#/$'\n'}" 
 #return
-if [[ "$2" ]]; then 
+if [[ "" ]]; then 
   echo "$1:"
   echo "${out1//#NEWLIN#/$'\n'}" 
   printf "\n"
@@ -374,9 +390,9 @@ function @import() {
 
 declare -F exportFunction >/dev/null && exportFunction @require @unquote @parse @exclude
 
-if (return 0 2>/dev/null); then
-  [[ -z "$BASHX_NESTED" ]] && BASHX_NESTED=true && bashx "${BASH_SOURCE[-1]}" && exit
-elif [[ -z $BASHX_NESTED ]]; then
+if ! (return 0 2>/dev/null); then
+#  [[ -z "$BASHX_NESTED" ]] && BASHX_NESTED=true && bashx "${BASH_SOURCE[-1]}" && exit
+#elif [[ -z "$BASHX_NESTED" ]]; then
   BASHX_NESTED=true 
   if [ -z "$1" ]; then
     @error "Invalid usage. Use $0 [filename]"
