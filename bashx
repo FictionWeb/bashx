@@ -230,7 +230,9 @@ function _render() {
   		;;
 		# capture subshell execution
 		'$('*) 
-    		if [[ "${line: -1}" != ')' ]]; then
+    		if [[ "$ismeta" ]]; then
+				pre_query+="$line"
+			elif [[ "${line: -1}" != ')' ]]; then
       			readchunk=true
       			line="${line//\$(/\$($'\n'  }"
       			chunk="${line%%)}"$'\n'
@@ -255,7 +257,9 @@ function _render() {
 			;;
 		# append chunk in case subshell is multi-line
   		')') 
-      		if [[ "$chunk" ]]; then 
+      		if [[ "$ismeta" ]]; then
+				pre_query+="$line"
+			elif [[ "$chunk" ]]; then 
 				_conditionalRender <<<"${chunk//||/$'\n'||$'\n'})"
 			else
 				output+="${line}"
@@ -272,7 +276,7 @@ function _render() {
   		*) 
     		if [[ "$inscript" != false ]]; then
 				_close_heredoc
-				output+="${line}"
+				[[ "$ismeta" == true ]] && pre_query+="$line" || output+="${line}"
 			else
 				[[ "$ismeta" == true ]] && pre_query+="$line"$'\n' || output+="${line}"$'\n'
 			fi
