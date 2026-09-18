@@ -141,21 +141,20 @@ function _render() {
 								*)
             						inscript=js
             						#output+=$'__eof\ncat <<- "_EOF_"\n'
-            						output+="$line"$'\n'
+            						[[ "$ismeta" ]] && pre_query+="$line"$'\n' || output+="$line"$'\n'
           					esac
 							;;
         				*'</script'*)
 							slevel=0
           					case "$inscript" in 
-            					js)	output+=$'</script>'	;;
-            					bash-client-silent)	output+=$'`)</script>'	;;
+            					js) line='</script>'	;;
+            					bash-client-silent)	line=$'`)</script>'	;;
             					bash-client)
               						read uid </proc/sys/kernel/random/uuid
-              						output+="\`,'$uid')</script><div id='$uid'></div>"
+              						line="\`,'$uid')</script><div id='$uid'></div>"$'\n_EOF_\n'
               						unset uid
-              						output+=$'\n_EOF_\n'
          		 			esac
-							[[ "$ismeta" == true ]] || _open_heredoc
+							[[ "$ismeta" == true ]] && pre_query+="$line" || _open_heredoc
           					inscript=false
 							;;
 						'<body'*|'<main'*|'<div'*)
@@ -164,21 +163,25 @@ function _render() {
 							[[ "$inscript" != false ]] && ((++slevel)) #&& echo "i $slevel $tag $line" && set -x
 							output+="${line}"$'\n'
           					;;
-						'<head'*)
+						'<head'*|'<head>')
 							((level+=2))
     	        			local ismeta=true
-							_close_heredoc
-							output+=$'fiction.addMeta <<- __eof\n'
-							heredoc_open=1
+							#_close_heredoc
+							pre_query=$'\nfiction.addMeta <<- __eof\n'
+							#heredoc_open=1
         	  				;;
 						'</head>')
 							((level-=2))
-							output+=$'__eof\n'
-							heredoc_open=0
+							pre_query+=$'__eof\n'
+							#heredoc_open=0
 							[[ -v ismeta ]] && unset ismeta
 							;;
          				'</'*)
-							[[ "$ismeta" == true ]] || _open_heredoc
+							if [[ "$ismeta" == true ]]; then
+								pre_query+="$line"$'\n'
+								continue
+							fi
+							 _open_heredoc
 							((level-=2))
 							((--slevel)) #&& echo "d $slevel $tag"
 							output+="${line}"$'\n'
@@ -187,7 +190,7 @@ function _render() {
 							output+="$line"$'\n'
 							;;
 						*)
-						[[ "$ismeta" == true ]] && output+="$line" && continue
+						[[ "$ismeta" == true ]] && pre_query+="$line" && continue
 						_open_heredoc
         				# check if there are special callbacks
           				case "$line" in
@@ -271,7 +274,7 @@ function _render() {
 				_close_heredoc
 				output+="${line}"
 			else
-				output+="${line}"$'\n'
+				[[ "$ismeta" == true ]] && pre_query+="$line"$'\n' || output+="${line}"$'\n'
 			fi
   		esac 
 	done
@@ -321,6 +324,7 @@ eof
 )
     		newblock="${newblock//  }"
 		elif [[ "${block::8}" == "@respond" ]]; then
+			local pre_query=""
 			status="${block:9:3}"
 			if ! [ "$status" -eq "$status" ] 2>/dev/null; then
 				_error "($1) Invalid status code: $status"$'\n'"$block"
@@ -328,7 +332,7 @@ eof
 			fi
 			block1="${block1%%\}}"
     		_render "" <<< "${block1/@respond $status \{}"
-    		local newblock="FictionResponseHeaders['content-type']='text/html'"$'\n{\n'"${render_output}"$'\n} | fiction.respond '"$status"'; __fiction_responded=1' # > "$WORKER_OUT"; printf "%s\n" "'"$status"'" >"$WORKER_FIFO2"'
+    		local newblock="FictionResponseHeaders['content-type']='text/html'"$'\n'"${pre_query}"$'\n{\n'"${render_output}"$'\n} | fiction.respond '"$status"'; __fiction_responded=1' # > "$WORKER_OUT"; printf "%s\n" "'"$status"'" >"$WORKER_FIFO2"'
 			#newblock="${newblock//\&/\\\&}"
   		fi
   		newblock="${newblock##$'\n'}"
