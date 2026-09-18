@@ -119,7 +119,10 @@ function _render() {
 					case "$tag" in
 						*'<script'*)
 							slevel=0
-							[[ "$ismeta" == true ]] || _close_heredoc
+							if [[ "$ismeta" != true ]]; then 
+								_close_heredoc
+								_open_heredoc
+							fi
 							case "$attr" in
 								*'bash-client'*)
             						[[ "$type" =~ silent || ! -v bash_wasm_path ]] && inscript=bash-client-silent || inscript=bash-client
@@ -130,22 +133,22 @@ function _render() {
 								# match "<script type=text/x-bash>" blocks
             						if [[ $__render_type == client ]]; then
               							inscript=bash-client
-              							output+=$'__eof\ncat <<- "EOF"\n<script>execute(`'
+              							output+=$'<script>execute(`'
             						else 
               							inscript=bash 
             						fi
 									;;
 								*)
             						inscript=js
-            						output+=$'__eof\ncat <<- "_EOF_"\n'
+            						#output+=$'__eof\ncat <<- "_EOF_"\n'
             						output+="$line"$'\n'
           					esac
 							;;
         				*'</script'*)
 							slevel=0
           					case "$inscript" in 
-            					js)	output+=$'</script>\n_EOF_\n'	;;
-            					bash-client-silent)	output+=$'`)</script>\n_EOF_\n'	;;
+            					js)	output+=$'</script>'	;;
+            					bash-client-silent)	output+=$'`)</script>'	;;
             					bash-client)
               						read uid </proc/sys/kernel/random/uuid
               						output+="\`,'$uid')</script><div id='$uid'></div>"
