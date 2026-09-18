@@ -9,6 +9,7 @@ _bold="$(tput bold)"
 _nc="$(tput sgr 0)"
 }
 function _conditionalRender() {
+shopt -u patsub_replacement
 #  set -x 
   while read line; do
     if [[ "$line" == '$(' ]]; then # match start of subshell capture
@@ -16,7 +17,7 @@ function _conditionalRender() {
     elif [[ "${line::2}" =~ \<[a-Z]|\</|\"\<|\'\<  ]]; then # match html element
       line="${line%% }"
 	  if [[ ${line: -2} == "&&" ]]; then # skip && for now
-        line="${line%%\&\&}"
+        line="${line%%&&}"
         @unquote line
         local appendand=true
       else 
@@ -71,6 +72,7 @@ function _close_heredoc() {
 }
 
 function _render() {
+	shopt -u patsub_replacement
 	#set -x
 	local dom=false level=2 slevel=0 inscript=false output='' i=0 tag='' indent=''
 	local -a parent=() elements=()
@@ -117,7 +119,7 @@ function _render() {
 					case "$tag" in
 						*'<script'*)
 							slevel=0
-							_close_heredoc
+							[[ "$ismeta" == true ]] || _close_heredoc
 							case "$attr" in
 								*'bash-client'*)
             						[[ "$type" =~ silent || ! -v bash_wasm_path ]] && inscript=bash-client-silent || inscript=bash-client
@@ -150,7 +152,7 @@ function _render() {
               						unset uid
               						output+=$'\n_EOF_\n'
          		 			esac
-							_open_heredoc
+							[[ "$ismeta" == true ]] || _open_heredoc
           					inscript=false
 							;;
 						'<body'*|'<main'*|'<div'*)
@@ -173,7 +175,7 @@ function _render() {
 							[[ -v ismeta ]] && unset ismeta
 							;;
          				'</'*)
-							_open_heredoc
+							[[ "$ismeta" == true ]] || _open_heredoc
 							((level-=2))
 							((--slevel)) #&& echo "d $slevel $tag"
 							output+="${line}"$'\n'
@@ -182,6 +184,7 @@ function _render() {
 							output+="$line"$'\n'
 							;;
 						*)
+						[[ "$ismeta" == true ]] && output+="$line" && continue
 						_open_heredoc
         				# check if there are special callbacks
           				case "$line" in
@@ -232,14 +235,14 @@ function _render() {
       			# pass subshell chunk to conditional renderer
       			if [[ "$__render_type" == client ]]; then 
         			output+=$'cat <<- "_EOF_"\n<script>execute(`'
-        			line="${line//&&/&&$'\n'}"
         			_conditionalRender <<<"${line//||/$'\n'||$'\n'}"
         			local uid=$(cat /proc/sys/kernel/random/uuid)
 			        output+="\`,'$uid')</script><div id='$uid'></div>" # extra div to redirect output from bash-client block
         			output+=$'\n_EOF_\n'
 			        unset uid
 			    else
-        			line="${line//&&/&$'\n'}"
+        			line="${line//&&/&&$'\n'}"
+					_close_heredoc
 			        _conditionalRender <<<"${line//||/$'\n'||$'\n'}"
       			fi
     		fi
@@ -264,7 +267,6 @@ function _render() {
     		if [[ "$inscript" != false ]]; then
 				_close_heredoc
 				output+="${line}"
-				_open_heredoc
 			else
 				output+="${line}"$'\n'
 			fi
@@ -276,6 +278,7 @@ function _render() {
 } 
 
 bashx() {
+	shopt -u patsub_replacement
 	if [ -f "$1" ]; then 
   	# regex for capturing all @return blocks
   		input=$(sed -E 's#(.*)\@return[[:space:]](json|html)[[:space:]]*\{[[[:space:]]*]?(.*)[^^]\}(.*)$#\1\n\@return \2 \{\n\3\n}\n\4#g' "$1" | sed 's/^source.*bashx//g') 
@@ -303,7 +306,7 @@ bashx() {
     		block1="${block1%%\}}"
     		_render "" <<< "${block1/@return html \{}"
     		local newblock=$'{\n'"${render_output}"$'\n}'
-			newblock="${newblock//\&/\\\&}"
+			#newblock="${newblock//\&/\\\&}"
   		elif [[ "${block:8:4}" == 'json' ]]; then 
   			# remove semicolon, newlines and escape double quotes
     		local newblock="${block/@return json}"
@@ -323,7 +326,7 @@ eof
 			block1="${block1%%\}}"
     		_render "" <<< "${block1/@respond $status \{}"
     		local newblock="FictionResponseHeaders['content-type']='text/html'"$'\n{\n'"${render_output}"$'\n} | fiction.respond '"$status"'; __fiction_responded=1' # > "$WORKER_OUT"; printf "%s\n" "'"$status"'" >"$WORKER_FIFO2"'
-			newblock="${newblock//\&/\\\&}"
+			#newblock="${newblock//\&/\\\&}"
   		fi
   		newblock="${newblock##$'\n'}"
   		block="${block//$'\n'/#NEWLIN#}"
@@ -340,7 +343,6 @@ eof
 	#echo "${out1//#NEWLIN#/$'\n'}" 
 	#return
 	if [[ "$2" ]]; then
-		out1="${out1//\%AND\%/\&}"
 		echo "${out1//#NEWLIN#/$'\n'}" >"$2"
 	elif [[ "" ]]; then
 			echo "$1:"
@@ -348,7 +350,6 @@ eof
   			printf "\n"
 	else 
   		BASHX_FILENAME="$(readlink -f "$1")"
-  		out1="${out1//\%AND\%/\&}"
   		eval "${out1//#NEWLIN#/$'\n'}"
 	fi
 	unset out out1 out2 block block1
